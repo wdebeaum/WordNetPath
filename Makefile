@@ -6,6 +6,9 @@ CONFIGDIR=trips/src/config
 include $(CONFIGDIR)/ruby/lib.mk
 include $(CONFIGDIR)/ruby/defs.mk
 
+install::
+	(cd trips/src/util/ && $(MAKE) install)
+
 install-needed-gems:
 	$(GEM) install sqlite3 --version '>=1.3.5'
 	$(GEM) install treetop --version '>=1.4.10'
