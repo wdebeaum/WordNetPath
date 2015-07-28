@@ -1,0 +1,77 @@
+module WordNetPath
+  grammar Expression
+    rule expr
+      sp diff sp <Expr>
+    end
+
+    rule diff
+      head:disj tail:(sp '-' sp disj)* <Diff>
+    end
+
+    rule disj
+      head:conj tail:(sp '|' sp conj)* <Disj>
+    end
+
+    rule conj
+      head:seq tail:(sp '&' sp seq)* <Conj>
+    end
+
+    rule seq
+      head:(pred / rep) tail:(sp (pred / rep))* <Seq>
+    end
+    
+    rule pred
+      '[' sp count:(count / '!')? sp diff sp ']' <Pred>
+    end
+
+    rule rep
+      atom (sp count)? <Rep>
+    end
+
+    rule count
+      ('?' / '*' / '+' /
+      '{' sp int (sp ',' sp int?)? sp '}' /
+      '{' sp ',' sp int sp '}') <Count>
+    end
+
+    rule int
+      [\d]+
+    end
+
+    rule atom
+      parens /
+      file /
+      sense_key /
+      synset /
+      pointer /
+      shares_words_with /
+      gloss_relation
+    end
+
+    rule shares_words_with
+      'sharesWordsWith' <SharesWordsWithExpr>
+    end
+
+    rule parens
+      '(' expr ')' <Parens>
+    end
+
+    rule file
+      'file:' sp string <FileExpr>
+    end
+
+    rule string
+      '"' ('\\' . / [^\\\"])* '"' <StringExpr>
+    end
+
+    rule sense_key
+      [^\s%]* '%' ([\d]? (':' ([\d] 2..2)? (':' ([\d] 2..2)? (':' [^\s:]* (':' ([\d] 2..2)?)?)?)?)?)? <SenseKey>
+    end
+
+    include LanguageSpecificAtom
+
+    rule sp
+      [\s]*
+    end
+  end
+end

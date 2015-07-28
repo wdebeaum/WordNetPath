@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>WordNetPath</title>
+<style type="text/css">
+table, tr, th, td {
+  border: 1px solid black;
+  border-collapse: collapse;
+  padding: 1ex;
+}
+th, td {
+  vertical-align: top;
+  text-align: left;
+}
+code, code pre {
+  background-color: LightGray;
+}
+var {
+  background-color: SkyBlue;
+}
+</style>
+</head>
+<body>
+<h1>WordNetPath</h1>
+William de Beaumont<br>
+$Date: 2013/04/04 15:28:44 $
+
+<h2>Introduction</h2>
+<p>WordNetPath is a Ruby library for selecting subsets of <a href="http://wordnet.princeton.edu/wordnet/">WordNet</a> based on pointer and gloss tag path traversal. Evaluating a <a href="#path_expressions">path expression</a> yields the set of WordNet synsets reachable by traversing any of the described paths. WordNetPath is also capable of traversing esWN, the Spanish version of WordNet, with a slightly different syntax. The differences are described in the <a href="#esWN_Differences">esWN Differences</a> section below. The rest of this document assumes you're using the English WordNet.</p>
+
+<p>In this document, computer code is displayed like <code>this</code>, and variables like <code><var>this</var></code>.</p>
+
+<h2>Prerequisites</h2>
+<ul>
+ <li><code><var>$TRIPS_BASE</var>/etc/WordNetSQL/wn.db</code> (see the <a href="../WordNetSQL/README.html"><code>WordNetSQL README</code></a>)
+ <li><a href="http://ruby-lang.org/">Ruby</a> 1.9, with the following <a href="http://rubygems.org/">gems</a>:
+  <ul>
+   <li><a href="http://rubygems.org/gems/sqlite3">sqlite3</a> - to access <code>wn.db</code>
+   <li><a href="http://rubygems.org/gems/treetop">treetop</a> - to generate the path expression parser
+   <li><a href="http://rubygems.org/gems/progressbar">progressbar</a> - to display progress of path traversal steps
+  </ul>
+</ul>
+<p>Note that the sqlite3 gem uses native extensions, so it won't work with e.g. <a href="http://jruby.org/">JRuby</a>. Ruby 1.9 can be installed on a Mac through <a href="http://www.macports.org/">MacPorts</a>: <code>sudo port install ruby19</code>. The version of Ruby that comes with Mac OS X is 1.8; that will remain untouched by the MacPorts install. Use the configure option <code>--with-ruby=/opt/local/bin/ruby1.9</code> to select the correct version. Then you can run <code>make install-needed-gems</code> to get the gems above.</p>
+
+<h2><a name="path_expressions">Path Expressions</a></h2>
+<p>A <dfn>path expression</dfn> is a string that describes paths to follow from a seed to the set of synsets you want to get. The <dfn>seed</dfn> can be a synset, a word, or a partial sense key (which lets you select a particular word and part of speech without having to specify each specific sense), or an alternation of these. Expressions without seeds can be thought of as taking a set of source synsets as input from the left side, and outputting a set of destination synsets to their right.</p>
+
+<p>Path expressions are inspired by both <code>grep</code> regexes and XPath expressions. They inherit <code>grep</code>'s sequence, alternation, and repetition syntax, as well as a limited form of XPath's predicate syntax, and parenthetical grouping from both. The <code>-</code> and <code>&amp;</code> operators are used in place of XPath's <code>except</code> and <code>intersect</code>, respectively. The atoms of these expressions are either steps (generalized WordNet pointers) or seeds (which discard their input and have a fixed output).</p>
+
+<h3>Operators</h3>
+<p>The following table explains all the available operators, grouped by precedence, from highest to lowest. <code><var>a</var></code> and <code><var>b</var></code> are subexpressions, and <code><var>m</var></code> and <code><var>n</var></code> are integers.</p>
+
+<table>
+ <tr><th>Precedence</th><th>Operator</th><th>Meaning</th></tr>
+ <tr><td rowspan="4">6</td>
+     <td><code>(<var>a</var>)</code></td>
+     <td>Same as <code><var>a</var></code>, but subvert operator precedence to ensure <code><var>a</var></code> is parsed as a single expression.</td>
+ <tr><td><code>[<var>a</var>]</code></td>
+     <td>Keep only those inputs for which following <code><var>a</var></code> yields at least one result.</td></tr>
+ <tr><td><code>[!<var>a</var>]</code></td>
+     <td>Keep only those inputs for which following <code><var>a</var></code> yields no results.</td></tr>
+ <tr><td><code>[{<var>m</var>,<var>n</var>}<var>a</var>]</code></td>
+     <td>Keep only those inputs for which following <code><var>a</var></code> yields a number of results in the given range. The range works the same as it does for repetition (see below). The previous two operators are equivalent to <code>[{1,}<var>a</var>]</code> and <code>[{0}<var>a</var>]</code>, respectively.</td></tr>
+ <tr><td rowspan="5">5</td>
+     <td><code><var>a</var>?</code></td>
+     <td>Optionally follow <code><var>a</var></code> (i.e. include the starting point in the results).</td></tr>
+ <tr><td><code><var>a</var>*</code></td>
+     <td>Follow <code><var>a</var></code> 0 or more times in sequence (aka "Kleene star").</td></tr>
+ <tr><td><code><var>a</var>+</code></td>
+     <td>Follow <code><var>a</var></code> 1 or more times in sequence.</td></tr>
+ <tr><td><code><var>a</var>{<var>m</var>}</code></td>
+     <td>Follow <code><var>a</var></code> exactly <code><var>m</var></code> times in sequence.</td></tr>
+ <tr><td><code><var>a</var>{<var>m</var>,<var>n</var>}</code></td>
+     <td>Follow <code><var>a</var></code> at least <code><var>m</var></code> and at most <code><var>n</var></code> times in sequence. Either value may be omitted to mean 0 or infinity, respectively: <code>{<var>m</var>,}</code> means "at least <code><var>m</var></code>", and <code>{,<var>n</var>}</code> means "at most <code><var>n</var></code>". The previous four operators are equivalent to <code><var>a</var>{,1}</code>, <code><var>a</var>{0,}</code>, <code><var>a</var>{1,}</code>, and <code><var>a</var>{<var>m</var>,<var>m</var>}</code>, respectively.</td></tr>
+ <tr><td>4</td><td><code><var>a</var> <var>b</var></code></td>
+     <td>(juxtaposition) Follow <code><var>a</var></code> and then <code><var>b</var></code> in sequence, i.e. use <code><var>a</var></code>'s output as <code><var>b</var></code>'s input.</td></tr>
+ <tr><td>3</td><td><code><var>a</var>&amp;<var>b</var></code></td>
+     <td>Follow both <code><var>a</var></code> and <code><var>b</var></code> from the same starting point, and take the set intersection of the results.</td></tr>
+ <tr><td>2</td><td><code><var>a</var>|<var>b</var></code></td>
+     <td>Follow both <code><var>a</var></code> and <code><var>b</var></code> from the same starting point, and take the set union of the results (aka "alternation").</td></tr>
+ <tr><td>1</td><td><code><var>a</var>-<var>b</var></code></td>
+     <td>Follow both <code><var>a</var></code> and <code><var>b</var></code> from the same starting point, and take the set difference of the results.</td></tr>
+</table>
+
+<h3>Steps</h3>
+<ul>
+ <li>WordNet pointer names in camel case, starting with lowercase letters, including generic <code>holonym</code>/<code>meronym</code> and <code>domain</code>/<code>domainMember</code> pointers.
+ <li><code>sharesWordsWith</code>. <code><var>A</var> sharesWordsWith <var>B</var></code> if there exist a sense of <code><var>A</var></code> and a sense of <code><var>B</var></code> with the same lemma.
+ <li>The two general gloss relations: <code>glossContains</code> and <code>containedInGlossOf</code>. These use the sense tags in the WordNet tagged gloss corpus; <code><var>A</var> glossContains <var>B</var></code> iff <code><var>A</var></code>'s gloss contains a sense tag referring to a sense in <code><var>B</var></code>. <code>containedInGlossOf</code> is the inverse relation.
+ <li>Variants of the above specific to definitions and examples: <code>defContains</code>, <code>containedInDefOf</code>, <code>exContains</code>, and <code>containedInExOf</code>. In WordNet, "gloss" refers to the entire string including definitions and examples. These relations allow you to use only one or the other.
+ <li>Variants of the above two followed immediately by <code>InContext:/<var>pattern</var>/<var>modifiers</var></code> (with no space separating them). The <code>/<var>pattern</var>/<var>modifiers</var></code> part is interpreted as a Ruby Regexp, with the following restrictions:
+  <ul>
+   <li>Only <code>//</code> delimiters are allowed (no <code>%r{...}</code>).
+   <li>The pattern must not use interpolation (no <code>#{...}</code>).
+   <li>The pattern must contain a single unescaped <code>#</code> character; this stands in for the sense tag in question. The sections of the pattern on either side of the <code>#</code> must each be valid patterns on their own, since they are in fact matched separately for the substrings on either side of the sense tag.
+   <li>Only the <code>i</code> (case insensitive), <code>m</code> (multiline), and <code>x</code> (extended syntax) modifiers are allowed.
+  </ul>
+ The regexp is matched against the whole gloss, regardless of whether you specified <code>def</code> or <code>ex</code>; these only affect where the sense tag is allowed to be. See the <a href="http://www.ruby-doc.org/core-1.9/Regexp.html">Ruby documentation for Regexps</a> for more information.
+</ul>
+
+<h3>Seeds</h3>
+<p>These should really only be used at the beginning of a sequence, since they discard their input.</p>
+<ul>
+ <li>WordNet sense keys, i.e. <code><var>lemma</var>%<var>ss_type</var>:<var>lex_filenum</var>:<var>lex_id</var>:<var>head_word</var>:<var>head_id</var></code> (<code><var>ss_type</var></code> here is the numeric synset type 1-5). Any part may be omitted except for the <code>%</code> and any <code>:</code>s between the <code>%</code> and the last part given. The omitted parts match any string in their place. If only the last two fields are omitted, and the <code>:</code>s are still there (as is the case for most actual sense keys), an exact match is tried first, and a partial match is only tried if that fails.
+ <li>WordNet synsets expressed as an alphabetic synset type (one of <code>nvars</code>) followed by a synset offset of exactly 8 digits, 0-padded. The substitutions of synset types <code>a</code> and <code>s</code> that sometimes occur in WordNet are not allowed here; if a synset is a satellite you must use <code>s</code>, if it's a head adjective you must use <code>a</code>.
+ <li><code>file:"<var>filename</var>"</code>, where the named file is interpreted as an alternation of its lines, and each line is interpreted as a (partial) sense key. Leading and trailing whitespace are trimmed, internal whitespace is converted to single underscores, and if a line doesn't contain a <code>%</code>, one is added at the end. This makes it possible to load lists of sense keys or phrases (or a mix) from a file. A given file is only loaded once and its value (a set of synsets) is saved in a class variable.
+</ul>
+<p>See the files <code>parser.treetop</code> and <code>parser_en.treetop</code> (or <code>parser_es.treetop</code> for Spanish) for a full description of the grammar.</p>
+
+<h2>Path Expression Examples</h2>
+<h3>Seeds</h3>
+<dl>
+<dt><code>%</code>
+<dd>Get all synsets (not recommended).
+<dt><code>%1</code>
+<dd>Get all noun (ss type 1) synsets (still not recommended).
+<dt><code>sleep%</code>
+<dd>Get all senses of the word "sleep".
+<dt><code>sleep%1</code>
+<dd>Get all noun senses of the word "sleep".
+<dt><code>sleep%1:26:00::</code>
+<dd>Get the synset denoted by this sense key. <code>sleep%1:26:00</code> (without the <code>::</code>) also works.
+<dt><code>%:18</code>
+<dd>Get all synsets denoting people (from lexicographer file number 18).
+<dt><code>%5:::crooked</code>
+<dd>Get all satellite adjectives of senses of "crooked" (it might be more efficient to express this as <code>crooked%3 similarTo</code>, however).
+<dt><code>file:"my-spiffy-list-of-sense-keys.txt"</code>
+<dd>Get all synsets denoted by any of the sense keys/phrases in that text file.
+</dl>
+<h3>More</h3>
+<dl>
+<dt><code>wolf%1:05:00:: hyponym</code>
+<dd>Get all the direct hyponyms of the synset that the sense denoted by the sense key <code>wolf%1:05:00::</code> is in (but not that synset itself)
+<dt><code>taxon%1:14:00:: hyponym*</code>
+<dd>Get the entire tree of hyponyms of <code>taxon%1:14:00::</code>, including that synset itself. (Note that this does not include instance hyponyms.)
+<dt><code>get_hold_of%2:35:00:: sharesWordsWith</code>
+<dd>Get all synsets sharing words with the synset containing that sense of "get hold of". That sense has one synonym, <code>take%2:35:00::</code>. There are 3 senses of "get hold of", and 44 senses of "take", and only 1 synset with both words, so this expression outputs 3 + 44 - 1 = 46 synsets.
+<dt><code>sleep%1 containtedInGlossOf &amp; %:18</code>
+<dd>Get all synsets such that their glosses contain a noun sense of "sleep" (or a synonym) and they denote people.
+<dt><code>wolf%2:34:00:: glossContainsInContext:/eat #/</code>
+<dd>Get all synsets tagged in the gloss of that sense of "wolf" such that the tag is preceded by "eat ".
+<dt><code>taxon%1:14:00:: (hypernym [{,10} hyponym])*</code>
+<dd>Get all the (inherited) hypernyms of <code>taxon%1:14:00::</code>, but stop when one is reached that has more than 10 direct hyponyms (without including that hypernym).
+<dt><code>coalition%1:14:00:: containedInGlossOf [!instanceHypernym]</code>
+<dd>Get all synsets whose glosses (including examples) are tagged with <code>coalition%1:14:00::</code> (or its synonyms), except those that have an instance hypernym.
+<dt><code>(hyponym | instanceHyponym | meronym)* containedInGlossOf?</code>
+<dd>This one requires a set of input synsets, since there is no seed. The output includes the input, any synsets reachable from those synsets by some combination of hyponym, instance hyponym, and (all kinds of) meronym pointers, and any synsets in turn whose glosses are tagged with those synsets.
+<dt><code>governance%1:04:00:: (antonym | attribute | derivationallyRelatedForm | entailment | cause | alsoSee | verbGroup | similarTo | participleOfVerb | pertainsToNoun | derivedFromAdjective){0,5} [! instanceHypernym ]</code>
+<dd>Start with that sense of "governance", and add all synsets reachable via up to 5 pointers of any of the kinds listed within the parentheses, except those synsets that have an instance hypernym. Note that it's still possible to get synsets reached via synsets that have an instance hypernym, as long as the last one doesn't.
+<dt><code>governance%1:04:00:: ( (antonym | attribute | derivationallyRelatedForm | entailment | cause | alsoSee | verbGroup | similarTo | participleOfVerb | pertainsToNoun | derivedFromAdjective) [! instanceHypernym ] ){0,5}</code>
+<dd>Like above, but doesn't allow traversal through synsets with instance hypernyms.
+<dt><code>governance%1:04:00:: ( (hyponym | derivationallyRelatedForm) - establishment%1:06:00:: )*</code>
+<dd>Get all synsets reachable from that sense of "governance" via some combination of hyponym and derivationallyRelatedForm pointers, except those only reachable via that sense of "establishment".
+<dt><code>dutch_oven%1:06:01:: hypernym* &amp; teapot%1:06:00:: hypernym*</code>
+<dd>Get all synsets that are (inherited) hypernyms of both these senses of "dutch oven" and "teapot".
+<dt><code>dutch_oven%1:06:01:: hypernym* - autoclave%1:06:00:: hypernym*</code>
+<dd>Get all synsets that are (inherited) hypernyms of that sense of "dutch oven" but not of that sense of "autoclave".
+<dt><code>( cooking_utensil%1:06:00:: hyponym* ) [! partMeronym partHolonym &amp; automobile%1:06:00:: ]</code>
+<dd>Get all (inherited) hyponyms of that sense of "cooking utensil", except those having parts that are also parts of that sense of "automobile". Their hyponyms are still included, however.
+</dl>
+
+<h2><a name="Ruby_Examples">Ruby Examples</a></h2>
+<code>
+<pre>
+require ENV['TRIPS_BASE'] + '/etc/WordNetPath/word_net_path.rb'
+
+# get the WordNetSQL database
+db_filename = ENV['TRIPS_BASE'] + '/etc/WordNetSQL/wn.db'
+db = SQLite3::Database.new(db_filename)
+
+# get a parser instance
+p = WordNetPath::ExpressionParser.new
+
+# parse an expression
+expr = "your path expression here"
+tree = p.parse(expr)
+raise "Error parsing: #{p.failure_reason}" if (tree.nil?)
+
+# disable debugging to $stderr (on by default)
+WordNetPath.debug = false
+
+# evaluate the parse tree
+output_synsets = tree.eval(db)
+
+# evaluate with a set of synsets as input
+input_synsets = Set[['n',1740], ['a',1740]] # e.g.
+output_synsets = tree.eval(db, input)
+
+# evaluate, also producing a map from output synsets to the first paths used to
+# reach them (as a list of alternating synsets and step names)
+synsets2paths = {}
+output_synsets = tree.eval(db, input_synsets, '', synsets2paths)
+
+# check whether an expression is reversible
+tree.reversible? # =&gt; true or false
+
+# get the reverse of an expression
+reverse_tree = p.parse(tree.reverse(db))
+
+# if tree.reversible?, this should always be true:
+input_synsets == reverse_tree.eval(db, tree.eval(db, input_synsets))
+
+</pre>
+</code>
+
+<h2><a name="esWN_Differences">esWN Differences</a></h2>
+
+<p>esWN is different from English WordNet in a number of ways:</p>
+<ul>
+ <li>The set of pointers is different. See <code>parser_es.rb</code> for the full list.
+ <li>Pointer symbols are spelled out with underscores, so WordNetPath uses that form instead of camel case. The following generic pointers were added, standing for the alternation of all the pointers starting with the same prefix before <code>_any</code>: <code>has_holo_any</code>, <code>has_mero_any</code>, <code>role_any</code>, and <code>involved_any</code>. Note that <code>role</code> and <code>involved</code> are not the same as their <code>_any</code> versions; they are specifically for roles that aren't clearly one of the other specific roles.
+ <li>There are no tagged glosses, so there are no gloss relations like <code>glossContains</code>, <code>containedInExOf</code>, etc.
+ <li>There are no satellite adjectives (<code>ss_type='s'</code>).
+ <li>There are no sense keys, only sense numbers. WordNetSQL makes up sense keys for esWN of the form <code><var>lemma</var>%<var>ss_type_number</var>:00:<var>sense_number</var>::</code>.
+</ul>
+
+<p>To use esWN instead of English WordNet, run <code>make eswn.db</code> in <code>../WordNetSQL/</code> and set up WordNetPath like this in your code:</p>
+<code>
+<pre>
+# set the language to Spanish before requiring word_net_path.rb
+module WordNetPath
+  Language = 'es'
+end
+require ENV['TRIPS_BASE'] + '/etc/WordNetPath/word_net_path.rb'
+
+# get the WordNetSQL/eswn.db database
+db_filename = ENV['TRIPS_BASE'] + '/etc/WordNetSQL/eswn.db'
+db = SQLite3::Database.new(db_filename)
+</pre>
+</code>
+<p>After this, usage corresponds to the <a href="#Ruby_Examples">Ruby Examples</a> above.</p>
+
+<h2>Files</h2>
+<dl>
+<dt>Makefile
+<dd>Rules for testing the code and installing it as a library in <code><var>$TRIPS_BASE</var>/etc/WordNetPath/</code>.
+<dt>README.html
+<dd>This file.
+<dt>db.rb
+<dd>Extension to SQLite3::Database for making synset set -&gt; synset set SQL queries simpler.
+<dt>eval.rb
+<dd>Definition of nodes in the syntax tree output by the parser, including the <code>eval</code> method.
+<dt>eval_en.rb, eval_es.rb
+<dd>Language-specific code for synset, pointer, and gloss relation expressions.
+<dt>parser.treetop
+<dd>Path expression grammar, used by Treetop to generate the parser.
+<dt>parser_en.treetop, parser_es.treetop
+<dd>Language-specific grammar rules.
+<dt>test_eval.rb, test_eval_es.rb
+<dd>Tests of the <code>eval</code> method.
+<dt>test_parser.rb
+<dd>Tests of the parser.
+<dt>word_net_path.rb
+<dd>Main file to require when using the library.
+</dl>
+
+</body>
+</html>

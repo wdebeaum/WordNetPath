@@ -1,0 +1,34 @@
+module WordNetPath
+  grammar LanguageSpecificAtom
+    rule synset
+      ss_type:[nvar] synset_offset:([\d] 8..8) <SynsetExpr>
+    end
+
+    rule pointer
+      (
+      'has_hyponym' / 'has_hyperonym' /
+      'has_xpos_hyponym' / 'has_xpos_hyperonym' /
+      'has_holo_madeof' / 'has_holo_member' / 'has_holo_part' / 'has_holo_any' /
+      'has_mero_madeof' / 'has_mero_member' / 'has_mero_part' / 'has_mero_any' /
+      'has_subevent' / 'is_subevent_of' /
+      'involved_agent' / 'involved_instrument' / 'involved_location' /
+      'involved_patient' / 'involved_any' / 'involved' /
+      'role_agent' / 'role_instrument' / 'role_location' /
+      'role_patient' / 'role_any' / 'role' /
+      'be_in_state' / 'state_of' /
+      'causes' / 'is_caused_by' /
+      'derived_from' / 'has_derived' /
+      'pertains_to' / 'is_pertained_to' /
+      'near_antonym' / 'near_synonym' / 'xpos_near_synonym' /
+      'xpos_fuzzynym' /
+      'see_also_wn15' /
+      'verb_group'
+      ) <Pointer>
+    end
+
+    rule gloss_relation
+      &{false} # always fail, since we have none of these in esWN
+    end
+  end
+end
+

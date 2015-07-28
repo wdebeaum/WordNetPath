@@ -1,0 +1,43 @@
+module WordNetPath
+  grammar LanguageSpecificAtom
+    rule synset
+      ss_type:[nvars] synset_offset:([\d] 8..8) <SynsetExpr>
+    end
+
+    rule pointer
+      ('antonym' /
+      'hypernym' /
+      'instanceHypernym' /
+      'hyponym' /
+      'instanceHyponym' /
+      'holonym' / 'memberHolonym' / 'substanceHolonym' / 'partHolonym' /
+      'meronym' / 'memberMeronym' / 'substanceMeronym' / 'partMeronym' /
+      'attribute' /
+      'derivationallyRelatedForm' /
+      'domainMember' / 'topicDomainMember' / 'regionDomainMember' / 'usageDomainMember' /
+      'domain' / 'topicDomain' / 'regionDomain' / 'usageDomain' /
+      'entailment' /
+      'cause' /
+      'alsoSee' /
+      'verbGroup' /
+      'similarTo' /
+      'participleOfVerb' /
+      'pertainsToNoun' /
+      'derivedFromAdjective') <Pointer>
+    end
+
+    rule gloss_relation
+      ( gloss_part direction:'Contains' / direction:'containedIn' gloss_part 'Of' )
+      ( 'InContext:' sp context:regexp )? <GlossRelation>
+    end
+
+    rule gloss_part
+      [Gg] 'loss' / [Dd] 'ef' / [Ee] 'x'
+    end
+
+    rule regexp
+      '/' pre:(('\\' . / [^\\\/#])*) '#' post:(('\\' . / [^\\\/#])*) '/' modifiers:([imx]*) <RegexpExpr>
+    end
+  end
+end
+
