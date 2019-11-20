@@ -140,17 +140,26 @@ module WordNetPath
       new_indent = indent + ' '
       # do all the complex operands and collect the simple ones
       simple_operands = []
+      no_complex_operands = true
       output =
         collect { |operand|
 	  if (operand.efficient_conj?)
 	    simple_operands << operand
 	    nil
 	  else
+	    no_complex_operands = false
 	    operand.eval(db, input, new_indent, trace)
 	  end
 	}.
 	reject { |o| o.nil? }.
 	inject(operator)
+      # if there were no complex operands, take the first simple one
+      if (no_complex_operands)
+	operand = simple_operands.shift
+	output = operand.eval(db, input, new_indent, trace)
+      end
+      # once we have some output, we can do efficient_conj with the simple
+      # operands
       simple_operands.each { |operand|
         output = operand.efficient_conj(output)
       }
